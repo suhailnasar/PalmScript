@@ -1,11 +1,25 @@
 import gradio as gr
 import cv2
 import mediapipe as mp
+from mediapipe.tasks import python
+from mediapipe.tasks.python import vision
 import numpy as np
 import pickle
 import time
+import urllib.request
+import os
 
-# Load model + scaler + encoder
+# Download hand landmarker model if not present
+MODEL_PATH = "hand_landmarker.task"
+if not os.path.exists(MODEL_PATH):
+    print("Downloading hand landmarker model...")
+    urllib.request.urlretrieve(
+        "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task",
+        MODEL_PATH
+    )
+    print("Download complete.")
+
+# Load ML model + scaler + encoder
 with open('./model/asl_model.pkl', 'rb') as f:
     model = pickle.load(f)
 with open('./model/scaler.pkl', 'rb') as f:
@@ -13,20 +27,16 @@ with open('./model/scaler.pkl', 'rb') as f:
 with open('./model/label_encoder.pkl', 'rb') as f:
     le = pickle.load(f)
 
-# MediaPipe setup
-from mediapipe.tasks import python as mp_python
-from mediapipe.tasks.python import vision
-from mediapipe import solutions
-from mediapipe.framework.formats import landmark_pb2
-
-mp_hands = solutions.hands
-mp_draw = solutions.drawing_utils
-hands = mp_hands.Hands(
-    static_image_mode=False,
-    max_num_hands=1,
-    min_detection_confidence=0.7,
+# MediaPipe Tasks API setup
+base_options = python.BaseOptions(model_asset_path=MODEL_PATH)
+options = vision.HandLandmarkerOptions(
+    base_options=base_options,
+    num_hands=1,
+    min_hand_detection_confidence=0.7,
+    min_hand_presence_confidence=0.5,
     min_tracking_confidence=0.5
 )
+detector = vision.HandLandmarker.create_from_options(options)
 
 # State
 current_sentence = []
@@ -46,22 +56,44 @@ def predict(frame):
         return None, "Waiting for sign...", ""
 
     frame = np.array(frame, dtype=np.uint8)
-    img_rgb = frame.copy()
-    result = hands.process(img_rgb)
     frame_out = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+
+    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame)
+    result = detector.detect(mp_image)
 
     predicted_letter = None
     confidence = 0
     now = time.time()
-    hand_present = bool(result.multi_hand_landmarks)
+    hand_present = bool(result.hand_landmarks)
 
     if hand_present:
         last_hand_time = now
-        landmarks = result.multi_hand_landmarks[0]
-        mp_draw.draw_landmarks(frame_out, landmarks, mp_hands.HAND_CONNECTIONS)
+        landmarks = result.hand_landmarks[0]
+
+        # Draw landmarks
+        for lm in landmarks:
+            x = int(lm.x * frame_out.shape[1])
+            y = int(lm.y * frame_out.shape[0])
+            cv2.circle(frame_out, (x, y), 4, (0, 255, 0), -1)
+
+        # Draw connections
+        connections = [
+            (0,1),(1,2),(2,3),(3,4),
+            (0,5),(5,6),(6,7),(7,8),
+            (5,9),(9,10),(10,11),(11,12),
+            (9,13),(13,14),(14,15),(15,16),
+            (13,17),(17,18),(18,19),(19,20),
+            (0,17)
+        ]
+        for start, end in connections:
+            x1 = int(landmarks[start].x * frame_out.shape[1])
+            y1 = int(landmarks[start].y * frame_out.shape[0])
+            x2 = int(landmarks[end].x * frame_out.shape[1])
+            y2 = int(landmarks[end].y * frame_out.shape[0])
+            cv2.line(frame_out, (x1, y1), (x2, y2), (0, 200, 100), 2)
 
         row = []
-        for lm in landmarks.landmark:
+        for lm in landmarks:
             row.extend([lm.x, lm.y, lm.z])
 
         features = scaler.transform(np.array(row).reshape(1, -1))
@@ -154,11 +186,9 @@ body, .gradio-container {
     font-family: 'Segoe UI', sans-serif !important;
 }
 
-/* Hide gradio footer and unnecessary elements */
 footer { display: none !important; }
 .built-with { display: none !important; }
 
-/* Top banner */
 #top-banner {
     background: #080c1a;
     border-bottom: 1px solid #151a30;
@@ -187,7 +217,6 @@ footer { display: none !important; }
     letter-spacing: 1px;
 }
 
-/* Hero section */
 #hero-title {
     text-align: center;
     padding: 36px 20px 20px;
@@ -204,7 +233,6 @@ footer { display: none !important; }
     padding-bottom: 28px;
 }
 
-/* Panel styling */
 .panel-label {
     font-size: 0.72em !important;
     text-transform: uppercase !important;
@@ -215,7 +243,6 @@ footer { display: none !important; }
     margin: 0 !important;
 }
 
-/* Camera and detection image */
 .gradio-image {
     background: #080c1a !important;
     border: 1px solid #151a30 !important;
@@ -223,7 +250,6 @@ footer { display: none !important; }
     overflow: hidden !important;
 }
 
-/* Letter display box */
 .letter-display textarea, .letter-display input {
     font-size: 2.8em !important;
     font-weight: 900 !important;
@@ -235,7 +261,6 @@ footer { display: none !important; }
     padding: 20px !important;
 }
 
-/* Sentence box */
 .sentence-display textarea {
     background: #0c1020 !important;
     color: white !important;
@@ -246,14 +271,12 @@ footer { display: none !important; }
     line-height: 1.6 !important;
 }
 
-/* Buttons */
 .btn-clear {
     background: #0c1020 !important;
     color: #ff4444 !important;
     border: 1px solid #ff444422 !important;
     border-radius: 10px !important;
     font-weight: 600 !important;
-    transition: all 0.2s !important;
 }
 
 .btn-backspace {
@@ -262,15 +285,8 @@ footer { display: none !important; }
     border: 1px solid #ff880022 !important;
     border-radius: 10px !important;
     font-weight: 600 !important;
-    transition: all 0.2s !important;
 }
 
-.btn-clear:hover, .btn-backspace:hover {
-    transform: translateY(-1px) !important;
-    opacity: 0.85 !important;
-}
-
-/* Labels */
 label span {
     color: #445 !important;
     font-size: 0.75em !important;
