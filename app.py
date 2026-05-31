@@ -14,8 +14,13 @@ with open('./model/label_encoder.pkl', 'rb') as f:
     le = pickle.load(f)
 
 # MediaPipe setup
-mp_hands = mp.solutions.hands
-mp_draw = mp.solutions.drawing_utils
+from mediapipe.tasks import python as mp_python
+from mediapipe.tasks.python import vision
+from mediapipe import solutions
+from mediapipe.framework.formats import landmark_pb2
+
+mp_hands = solutions.hands
+mp_draw = solutions.drawing_utils
 hands = mp_hands.Hands(
     static_image_mode=False,
     max_num_hands=1,

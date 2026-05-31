@@ -1,4 +1,4 @@
-mediapipe==0.10.30
+mediapipe
 opencv-python-headless
 scikit-learn
 numpy
